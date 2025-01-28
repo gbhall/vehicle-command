@@ -28,6 +28,7 @@ const (
 	EnvPort    = "TESLA_HTTP_PROXY_PORT"
 	EnvTimeout = "TESLA_HTTP_PROXY_TIMEOUT"
 	EnvVerbose = "TESLA_VERBOSE"
+	EnvDisableTLS   = "DISABLE_TLS" 
 )
 
 const nonLocalhostWarning = `
@@ -42,6 +43,7 @@ type HTTProxyConfig struct {
 	host         string
 	port         int
 	timeout      time.Duration
+	disableTLS   bool
 }
 
 var (
@@ -135,7 +137,13 @@ func main() {
 	// method of your implementation can perform your business logic and then, if the request is
 	// authorized, invoke p.ServeHTTP. Finally, replace p in the below ListenAndServeTLS call with
 	// an object of your newly created type.
-	log.Error("Server stopped: %s", http.ListenAndServeTLS(addr, httpConfig.certFilename, httpConfig.keyFilename, p))
+	if httpConfig.disableTLS || isCloudRun() {
+		log.Info("TLS disabled. Serving HTTP traffic.")
+		log.Error("Server stopped: %s", http.ListenAndServe(addr, p))
+	} else {
+		log.Info("Serving HTTPS traffic.")
+		log.Error("Server stopped: %s", http.ListenAndServeTLS(addr, httpConfig.certFilename, httpConfig.keyFilename, p))
+	}
 }
 
 // readConfig applies configuration from environment variables.
@@ -162,6 +170,10 @@ func readFromEnvironment() error {
 		}
 	}
 
+	if disableTLS, ok := os.LookupEnv(EnvDisableTLS); ok {
+		httpConfig.disableTLS = disableTLS == "true" || disableTLS == "1"
+	}
+
 	var err error
 	if httpConfig.port == defaultPort {
 		if port, ok := os.LookupEnv(EnvPort); ok {
@@ -182,4 +194,8 @@ func readFromEnvironment() error {
 	}
 
 	return nil
+}
+
+func isCloudRun() bool {
+	return os.Getenv("K_SERVICE") != ""
 }
