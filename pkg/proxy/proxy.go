@@ -17,12 +17,12 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/teslamotors/vehicle-command/internal/authentication"
 	"github.com/teslamotors/vehicle-command/internal/log"
 	"github.com/teslamotors/vehicle-command/pkg/account"
 	"github.com/teslamotors/vehicle-command/pkg/cache"
 	"github.com/teslamotors/vehicle-command/pkg/connector/inet"
 	"github.com/teslamotors/vehicle-command/pkg/protocol"
+	"github.com/teslamotors/vehicle-command/pkg/sign"
 	"github.com/teslamotors/vehicle-command/pkg/vehicle"
 )
 
@@ -127,7 +127,7 @@ type Response struct {
 
 type carResponse struct {
 	Result bool   `json:"result"`
-	Reason string `json:"string"`
+	Reason string `json:"reason"`
 }
 
 func writeJSONError(w http.ResponseWriter, code int, err error) {
@@ -157,8 +157,8 @@ func writeJSONError(w http.ResponseWriter, code int, err error) {
 	if code != http.StatusOK {
 		log.Error("Returning error %s", http.StatusText(code))
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	w.Header().Add("Content-Type", "application/json")
 	jsonBytes = append(jsonBytes, '\n')
 	w.Write(jsonBytes)
 }
@@ -293,6 +293,11 @@ func (p *Proxy) forwardRequest(acct *account.Account, w http.ResponseWriter, req
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	log.Info("Received %s request for %s", req.Method, req.URL.Path)
 
+	if req.URL.Path == "/health" {
+		p.handleHealthCheck(w, req)
+		return
+	}
+
 	acct, err := getAccount(req)
 	if err != nil {
 		writeJSONError(w, http.StatusForbidden, err)
@@ -331,6 +336,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	p.forwardRequest(acct, w, req)
 }
 
+func (p *Proxy) handleHealthCheck(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, nil)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
 func (p *Proxy) handleFleetTelemetryConfig(acct *account.Account, w http.ResponseWriter, req *http.Request) {
 	log.Info("Processing fleet telemetry configuration...")
 	defer func() {
@@ -357,7 +371,7 @@ func (p *Proxy) handleFleetTelemetryConfig(acct *account.Account, w http.Respons
 	if _, ok := params.Config["iss"]; ok {
 		log.Warning("Configuration 'iss' field will be overwritten")
 	}
-	token, err := authentication.SignMessageForFleet(p.commandKey, "TelemetryClient", params.Config)
+	token, err := sign.SignMessageForFleet(p.commandKey, "TelemetryClient", params.Config)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Errorf("error signing configuration: %s", err))
 		return
@@ -429,7 +443,8 @@ func (p *Proxy) handleVehicleCommand(acct *account.Account, w http.ResponseWrite
 		return err
 	}
 
-	w.Header().Add("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "{\"response\":{\"result\":true,\"reason\":\"\"}}")
 	return nil
 }
